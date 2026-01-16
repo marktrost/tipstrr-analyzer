@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tipstrr-analyzer
+    env: python
+    plan: free
+    pythonVersion: "3.11.9"  # ← ЯВНО указываем версию
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app"
+    envVars:
+      - key: TIPSTRR_USERNAME
+        sync: false
+      - key: TIPSTRR_PASSWORD
+        sync: false
