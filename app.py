@@ -2,31 +2,42 @@ from flask import Flask, jsonify
 import os
 import sys
 
-# Пробуем импортировать БД
-try:
-    from database import engine, SessionLocal
-    from models import Base
-    Base.metadata.create_all(bind=engine)
-    DB_AVAILABLE = True
-except Exception as e:
-    print(f"БД не доступна: {e}")
-    DB_AVAILABLE = False
-
 app = Flask(__name__)
+
+# Проверяем БД
+DB_AVAILABLE = False
+DB_ERROR = ""
+
+try:
+    # Пробуем подключиться к БД
+    import psycopg2
+    DATABASE_URL = os.environ.get('DATABASE_URL', '')
+    if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    if DATABASE_URL:
+        # Простая проверка подключения
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        conn.close()
+        DB_AVAILABLE = True
+    else:
+        DB_ERROR = "DATABASE_URL not set"
+except Exception as e:
+    DB_ERROR = str(e)
+    DB_AVAILABLE = False
 
 @app.route('/')
 def index():
     return jsonify({
         "status": "online",
         "message": "Tipstrr Analyzer работает!",
-        "database": "available" if DB_AVAILABLE else "not_available",
-        "version": "1.1",
+        "database": "available" if DB_AVAILABLE else f"not_available: {DB_ERROR}",
+        "version": "1.2",
         "endpoints": {
             "/health": "Проверка работы",
             "/status": "Детальный статус",
-            "/parse/<username>": "Парсинг каппера",
-            "/api/tipsters": "Список капперов",
-            "/api/bets/<username>": "Ставки каппера"
+            "/test-db": "Тест БД",
+            "/parse/<username>": "Парсинг каппера"
         }
     })
 
@@ -38,40 +49,53 @@ def health():
 def status():
     return jsonify({
         "python_version": sys.version,
-        "database": DB_AVAILABLE,
+        "database_available": DB_AVAILABLE,
+        "database_error": DB_ERROR if not DB_AVAILABLE else None,
         "environment_variables": {
             "TIPSTRR_USERNAME": bool(os.environ.get("TIPSTRR_USERNAME")),
             "DATABASE_URL": bool(os.environ.get("DATABASE_URL"))
         }
     })
 
-# Остальные эндпоинты пока оставляем как заглушки
+@app.route('/test-db')
+def test_db():
+    try:
+        import psycopg2
+        DATABASE_URL = os.environ.get('DATABASE_URL', '')
+        if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        cursor = conn.cursor()
+        cursor.execute("SELECT version();")
+        db_version = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "database": "connected",
+            "postgres_version": db_version[0]
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        })
+
 @app.route('/parse/<username>')
 def parse_tipster(username):
-    return jsonify({
-        "success": True,
-        "message": "Парсер готов к работе",
-        "next_step": "Добавить логику парсера"
-    })
-
-@app.route('/api/tipsters')
-def get_tipsters():
-    if not DB_AVAILABLE:
-        return jsonify({"error": "Database not available", "tipsters": []})
-    
+    # Простой парсер без БД
     try:
-        db = SessionLocal()
-        from models import Tipster
-        tipsters = db.query(Tipster).all()
-        result = [{"username": t.username, "name": t.name} for t in tipsters]
-        db.close()
-        return jsonify({"tipsters": result})
+        import requests
+        
+        return jsonify({
+            "success": True,
+            "message": f"Парсер для {username} готов",
+            "next": "Добавить логику когда БД заработает"
+        })
     except Exception as e:
-        return jsonify({"error": str(e), "tipsters": []})
-
-@app.route('/api/bets/<username>')
-def get_bets(username):
-    return jsonify({"username": username, "bets": [], "message": "В разработке"})
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
