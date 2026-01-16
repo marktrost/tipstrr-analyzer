@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "tipstrr-analyzer"
+version = "0.1.0"
+description = "Tipstrr.com analyzer"
+authors = ["Your Name <your@email.com>"]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"  # ← ФИКСИРУЕМ ВЕРСИЮ PYTHON
+Flask = "2.3.3"
+requests = "2.31.0"
+polars = "0.20.7"
+SQLAlchemy = "1.4.49"  # ← СТАРАЯ ВЕРСИЯ, совместимая с Python 3.11
+psycopg2-binary = "2.9.7"
+python-dotenv = "1.0.0"
+gunicorn = "21.2.0"
+
+[tool.poetry.group.dev.dependencies]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
