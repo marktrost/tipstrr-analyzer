@@ -1,7 +1,7 @@
 Flask==2.3.3
 requests==2.31.0
 polars==0.20.7
-SQLAlchemy==1.4.49
-psycopg2-binary==2.9.7
+SQLAlchemy==1.4.49  # ← работает с Python 3.11
+psycopg2-binary==2.9.7  # ← работает с Python 3.11
 python-dotenv==1.0.0
 gunicorn==21.2.0
