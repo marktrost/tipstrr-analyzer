@@ -1,5 +1,5 @@
 import requests
-import pandas as pd
+import polars as pl  # ← ИМЕННО ЭТО ИЗМЕНЕНИЕ
 from datetime import datetime
 import time
 import os
@@ -116,6 +116,11 @@ class TipstrrParser:
             
             logger.info(f"Найдено {len(all_tips)} прогнозов")
             
+            # СОЗДАЕМ POLARS DATAFRAME ДЛЯ АНАЛИЗА (опционально)
+            if all_tips:
+                df = pl.DataFrame(all_tips)
+                logger.info(f"Создан Polars DataFrame: {df.shape}")
+            
             # Обрабатываем каждый прогноз
             new_bets = 0
             for tip in all_tips:
@@ -159,6 +164,9 @@ class TipstrrParser:
             db.commit()
             logger.info(f"Добавлено {new_bets} новых ставок для {username}")
             
+            # ДОПОЛНИТЕЛЬНО: СОХРАНИМ В EXCEL ДЛЯ АНАЛИЗА (если нужно)
+            self._save_to_excel(all_tips, username)
+            
             return {
                 "tipster": tipster.username,
                 "total_bets": len(all_tips),
@@ -174,16 +182,194 @@ class TipstrrParser:
     
     def _parse_tip_details(self, reference):
         """Внутренний метод парсинга деталей ставки"""
-        # ... (используй твой существующий код из parse_tip_details и extract_tip_data)
-        # Вернуть словарь с данными или None
-        pass
+        try:
+            # 1. Получаем детали прогноза (ставки)
+            tip_url = f"https://tipstrr.com/api/portfolio/{self.username}/tips/cached/{reference}"
+            response_tip = self.session.get(tip_url)
+
+            if response_tip.status_code != 200:
+                logger.error(f"Ошибка при запросе прогноза {reference}: {response_tip.status_code}")
+                return None
+
+            tip_data = response_tip.json()
+
+            # 2. Получаем детали матча (фикстуры)
+            fixture_data = None
+            fixture_reference = None
+            
+            if tip_data.get('tipBetItem') and len(tip_data['tipBetItem']) > 0:
+                fixture_reference = tip_data['tipBetItem'][0].get('fixtureReference')
+            
+            if fixture_reference:
+                fixture_url = f"{API_FIXTURE_URL}/{fixture_reference}"
+                response_fixture = self.session.get(fixture_url)
+
+                if response_fixture.status_code == 200:
+                    fixture_data = response_fixture.json()
+
+            # Извлекаем данные
+            title = tip_data.get('title', '')
+            tip_date = tip_data.get('tipDate', '')
+            result = tip_data.get('result', '')
+            profit = tip_data.get('profit', '')
+
+            # Обработка даты
+            event_date = ''
+            event_time = ''
+            if tip_date:
+                try:
+                    dt = datetime.fromisoformat(tip_date.replace('Z', '+00:00'))
+                    event_date = dt.strftime('%Y-%m-%d')
+                    event_time = dt.strftime('%H:%M')
+                except:
+                    event_date = tip_date[:10] if len(tip_date) >= 10 else tip_date
+                    event_time = ''
+
+            # Данные о ставке
+            odds = None
+            market_text = ''
+            bet_text = ''
+
+            if tip_data.get('tipBet') and len(tip_data['tipBet']) > 0:
+                odds = tip_data['tipBet'][0].get('odds', '')
+
+            if tip_data.get('tipBetItem') and len(tip_data['tipBetItem']) > 0:
+                market_text = tip_data['tipBetItem'][0].get('marketText', '')
+                bet_text = tip_data['tipBetItem'][0].get('betText', '')
+
+            # Данные о матче из фикстуры (если есть)
+            home_team = ''
+            away_team = ''
+            sport = ''
+            league = ''
+
+            if fixture_data:
+                home_team = fixture_data.get('homeTeam', {}).get('name', '')
+                away_team = fixture_data.get('awayTeam', {}).get('name', '')
+                sport = fixture_data.get('sport', {}).get('name', '')
+                league = fixture_data.get('competition', {}).get('name', '')
+
+            # Если нет данных из фикстуры, пробуем извлечь из title
+            if not home_team and ' v ' in title:
+                parts = title.split(' v ')
+                if len(parts) == 2:
+                    home_team = parts[0].strip()
+                    away_team = parts[1].strip()
+
+            # Расшифровка результата
+            result_map = {1: 'Win', 2: 'Loss', 3: 'Void'}
+            result_text = result_map.get(result, f'Unknown ({result})')
+
+            return {
+                'event_date': event_date,
+                'event_time': event_time,
+                'home_team': home_team,
+                'away_team': away_team,
+                'match': f"{home_team} vs {away_team}" if home_team and away_team else title,
+                'sport': sport,
+                'league': league,
+                'market': market_text,
+                'bet': bet_text,
+                'odds': odds,
+                'result': result_text,
+                'profit': profit,
+                'raw_result_code': result,
+                'reference': reference
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка при парсинге деталей {reference}: {e}")
+            return None
+    
+    def _save_to_excel(self, data, username):
+        """Сохранение данных в Excel через polars"""
+        if not data:
+            return
+        
+        try:
+            # Создаем DataFrame из данных
+            df = pl.DataFrame(data)
+            
+            # Добавляем информацию о каппере
+            df = df.with_columns([
+                pl.lit(username).alias('tipster'),
+                pl.lit(datetime.now().strftime('%Y-%m-%d %H:%M:%S')).alias('parsed_at')
+            ])
+            
+            # Сохраняем в Excel
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{username}_bets_{timestamp}.xlsx"
+            
+            df.write_excel(
+                workbook=filename,
+                worksheet="bets",
+                autofit=True,
+                has_header=True
+            )
+            
+            logger.info(f"Данные сохранены в Excel: {filename}")
+            return filename
+            
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении в Excel: {e}")
+            # Если не получилось в Excel, сохраняем в JSON
+            return self._save_to_json(data, username)
+    
+    def _save_to_json(self, data, username):
+        """Резервное сохранение в JSON"""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{username}_bets_{timestamp}.json"
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Данные сохранены в JSON: {filename}")
+        return filename
+
 
 def parse_single_tipster(username="freguli", max_tips=50):
     """Функция для быстрого теста"""
     parser = TipstrrParser()
     return parser.parse_tipster(username, max_tips)
 
+
+def main():
+    """Функция для локального тестирования (как в твоем оригинальном коде)"""
+    print("=== Парсер Tipstrr.com (Polars версия) ===")
+    print("=" * 30)
+    
+    # Запрашиваем количество прогнозов
+    while True:
+        try:
+            user_input = input(
+                "\nСколько прогнозов парсить? (Enter = ВСЕ доступные, число = конкретное количество): ").strip()
+
+            if user_input == "":
+                max_tips = None  # ВСЕ доступные
+                print("Будут загружены ВСЕ доступные прогнозы (пока не закончатся)")
+                break
+            else:
+                max_tips = int(user_input)
+                if max_tips > 0:
+                    print(f"Будут загружены {max_tips} прогнозов")
+                    break
+                else:
+                    print("Введите положительное число или Enter для ВСЕХ прогнозов")
+        except ValueError:
+            print("Пожалуйста, введите число или нажмите Enter для ВСЕХ прогнозов")
+    
+    # Запускаем парсер
+    parser = TipstrrParser()
+    result = parser.parse_tipster(parser.username, max_tips)
+    
+    if result:
+        print(f"\n✓ Парсинг завершен!")
+        print(f"Каппер: {result['tipster']}")
+        print(f"Всего ставок: {result['total_bets']}")
+        print(f"Новых добавлено: {result['new_bets']}")
+    else:
+        print("\n✗ Ошибка при парсинге")
+
+
 if __name__ == "__main__":
-    # Тестовый запуск
-    result = parse_single_tipster("freguli", 10)
-    print(result)
+    main()
