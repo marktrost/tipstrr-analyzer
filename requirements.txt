@@ -1,0 +1,7 @@
+Flask==2.3.3
+requests==2.31.0
+polars==0.20.7
+SQLAlchemy==2.0.23  # ← БОЛЕЕ НОВАЯ ВЕРСИЯ
+psycopg2-binary==2.9.7
+python-dotenv==1.0.0
+gunicorn==21.2.0
